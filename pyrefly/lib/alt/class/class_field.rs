@@ -296,7 +296,13 @@ impl ClassField {
         }
     }
 
-    pub fn as_typed_dict_field_info(self, required_by_default: bool) -> Option<TypedDictField> {
+    pub fn as_typed_dict_field_info<Ans: LookupAnswer>(
+        self,
+        name: &Name,
+        required_by_default: bool,
+        solver: &AnswersSolver<'_, Ans>,
+        cls: &Class,
+    ) -> Option<TypedDictField> {
         match &self.0 {
             ClassFieldInner::Simple {
                 annotation:
@@ -307,10 +313,10 @@ impl ClassField {
                 ..
             } => Some(TypedDictField {
                 ty: ty.clone(),
-                read_only: Self::determine_readonly_reason(&Some(Annotation {
+                read_only: ClassField::determine_readonly_reason(cls, name, &Some(Annotation {
                     ty: Some(ty.clone()),
                     qualifiers: qualifiers.clone(),
-                })),
+                }), solver),
                 required: if qualifiers.contains(&Qualifier::Required) {
                     true
                 } else if qualifiers.contains(&Qualifier::NotRequired) {
@@ -367,24 +373,16 @@ impl ClassField {
         }
     }
 
-    /// Check if this field is read-only
-    pub fn is_read_only(&self) -> bool {
-        match &self.0 {
-            ClassFieldInner::Simple { readonly, .. } => readonly.is_some(),
-        }
-    }
-
-    /// Get the readonly reason if this field is read-only
-    pub fn readonly_reason(&self) -> Option<&ReadOnlyReason> {
-        match &self.0 {
-            ClassFieldInner::Simple { readonly, .. } => readonly.as_ref(),
-        }
-    }
 
     /// Determine the readonly reason from annotation and other factors
-    fn determine_readonly_reason(annotation: &Option<Annotation>) -> Option<ReadOnlyReason> {
+    fn determine_readonly_reason<Ans: LookupAnswer>(
+        cls: &Class,
+        name: &Name,
+        annotation: &Option<Annotation>,
+        solver: &AnswersSolver<'_, Ans>,
+    ) -> Option<ReadOnlyReason> {
+        // 1. Check annotations first (highest precedence)
         if let Some(ann) = annotation {
-            // Final has higher precedence than ReadOnly
             if ann.is_final() {
                 return Some(ReadOnlyReason::Final);
             }
@@ -392,7 +390,22 @@ impl ClassField {
                 return Some(ReadOnlyReason::ReadOnlyAnnotation);
             }
         }
-        // TODO: Add logic for frozen dataclass and namedtuple detection
+
+        // 2. Check class-level properties
+        let metadata = solver.get_metadata_for_class(cls);
+
+        if metadata.named_tuple_metadata().is_some() {
+            return Some(ReadOnlyReason::NamedTupleField);
+        }
+
+        // For frozen dataclass, only apply to actual dataclass fields, not methods
+        if let Some(dm) = metadata.dataclass_metadata() {
+            if dm.kws.is_set(&DataclassKeywords::FROZEN) && dm.fields.contains(name) {
+                return Some(ReadOnlyReason::FrozenDataclass);
+            }
+        }
+
+        // 3. Default - not read-only for any specific reason
         None
     }
 
@@ -532,7 +545,7 @@ fn bind_instance_attribute(
     instance: &Instance,
     attr: Type,
     is_class_var: bool,
-    readonly: bool,
+    readonly: Option<ReadOnlyReason>,
 ) -> Attribute {
     // Decorated objects are methods, so they can't be ClassVars
     match attr {
@@ -546,8 +559,11 @@ fn bind_instance_attribute(
             Some(make_bound_method(instance, attr).into_inner()),
             instance.class.dupe(),
         ),
-        attr if is_class_var || readonly => {
-            Attribute::read_only(make_bound_method(instance, attr).into_inner())
+        attr if is_class_var => {
+            Attribute::read_only(make_bound_method(instance, attr).into_inner(), ReadOnlyReason::Inherited)
+        }
+        attr if let Some(reason) = readonly => {
+            Attribute::read_only(make_bound_method(instance, attr).into_inner(), reason)
         }
         attr => Attribute::read_write(
             make_bound_method(instance, attr)
@@ -720,22 +736,8 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
 
         let annotation = direct_annotation.or(inherited_annotation.as_ref());
 
-        let is_namedtuple_member = metadata
-            .named_tuple_metadata()
-            .is_some_and(|named_tuple| named_tuple.elements.contains(name));
-        let is_frozen_dataclass_field = metadata.dataclass_metadata().is_some_and(|dataclass| {
-            dataclass.kws.is_set(&DataclassKeywords::FROZEN) && dataclass.fields.contains(name)
-        });
-
-        // Read-onlyness
-        let readonly = is_namedtuple_member
-            || is_frozen_dataclass_field
-            || (annotation.is_some_and(|a| a.is_read_only())
-                && matches!(initial_value, ClassFieldInitialValue::Class(_)));
-
         // Promote literals. The check on `annotation` is an optimization, it does not (currently) affect semantics.
-        let value_ty = if (!readonly || is_namedtuple_member)
-            && (annotation.is_none_or(|a| a.ty.is_none()))
+        let value_ty = if (annotation.is_none_or(|a| a.ty.is_none()))
             && value_ty.is_literal()
         {
             value_ty.clone().promote_literals(self.stdlib)
@@ -826,6 +828,9 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
             }
             _ => {}
         };
+
+        // Determine readonly reason
+        let readonly = ClassField::determine_readonly_reason(class, name, &annotation.cloned(), self);
 
         // Create the resulting field and check for override inconsistencies before returning
         let class_field = ClassField::new(
@@ -1047,10 +1052,13 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
                 let is_class_var = annotation.is_some_and(|ann| ann.is_class_var());
                 match field.initialization() {
                     ClassFieldInitialization::Class(_) => {
-                        bind_instance_attribute(instance, ty, is_class_var, readonly)
+                        bind_instance_attribute(instance, ty, is_class_var, readonly.clone())
                     }
-                    ClassFieldInitialization::Instance(_) if readonly || is_class_var => {
-                        Attribute::read_only(ty)
+                    ClassFieldInitialization::Instance(_) if readonly.is_some() => {
+                        Attribute::read_only(ty, readonly.unwrap())
+                    }
+                    ClassFieldInitialization::Instance(_) if is_class_var => {
+                        Attribute::read_only(ty, ReadOnlyReason::Inherited)
                     }
                     ClassFieldInitialization::Instance(_) => Attribute::read_write(ty),
                 }
