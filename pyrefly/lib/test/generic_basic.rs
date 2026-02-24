@@ -324,7 +324,9 @@ class MyStr(str): ...
 
 def test(m: MyStr, s: str):
     assert_type(concat(m, m), str)  # E: assert_type(MyStr, str) failed
-    assert_type(concat(m, s), str)  # E: assert_type(MyStr, str) failed  # E: Argument `str` is not assignable to parameter `y` with type `MyStr`
+    # With TypeVar widening, AnyStr is pinned to MyStr from the first arg,
+    # then widened to str for the second arg (since MyStr <: str).
+    assert_type(concat(m, s), str)
 "#,
 );
 

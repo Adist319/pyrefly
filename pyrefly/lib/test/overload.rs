@@ -1461,3 +1461,114 @@ def demo_variadic(s: tuple[int, ...]):
     assert_type(ndim(s), int)
     "#,
 );
+
+// https://github.com/facebook/pyrefly/issues/2519
+testcase!(
+    test_min_max_numeric_tower,
+    r#"
+from typing import assert_type
+
+a: int = 5
+b: float = 3.14
+
+# When int comes first, the TypeVar is pinned to int. Then float must satisfy
+# the same TypeVar, which requires widening int -> float via the numeric tower.
+assert_type(max(a, b), float)
+assert_type(min(a, b), float)
+
+# When float comes first, the TypeVar is pinned to float. Then int satisfies
+# int <: float, so this already works without widening.
+assert_type(max(b, a), float)
+assert_type(min(b, a), float)
+
+# Literal int and float
+assert_type(max(1, 2.0), float)
+assert_type(min(1, 2.0), float)
+
+# Same types should still work
+assert_type(max(1, 2), int)
+assert_type(max(1.0, 2.0), float)
+
+# Three arguments with mixed types
+assert_type(max(a, b, a), float)
+assert_type(min(1, 2.0, 3), float)
+    "#,
+);
+
+testcase!(
+    test_typevar_widening_numeric_tower,
+    r#"
+from typing import TypeVar, assert_type
+
+T = TypeVar('T')
+
+def identity_pair(a: T, b: T) -> T: ...
+
+# TypeVar should widen from int to float when int <: float
+assert_type(identity_pair(1, 2.0), float)
+assert_type(identity_pair(2.0, 1), float)
+    "#,
+);
+
+testcase!(
+    test_typevar_widening_in_tuple_arg,
+    r#"
+from typing import TypeVar, assert_type
+
+T = TypeVar('T')
+
+def first_of_pair(x: tuple[T, T]) -> T: ...
+
+# T should widen from int to float even inside a tuple
+assert_type(first_of_pair((1, 2.0)), float)
+assert_type(first_of_pair((2.0, 1)), float)
+    "#,
+);
+
+testcase!(
+    test_typevar_widening_unrelated_types_rejected,
+    r#"
+from typing import TypeVar
+
+T = TypeVar('T')
+
+def pair(a: T, b: T) -> T: ...
+
+# int and str are unrelated -- widening should NOT apply
+pair(1, "hello")  # E: Argument `Literal['hello']` is not assignable to parameter `b` with type `int`
+    "#,
+);
+
+testcase!(
+    test_typevar_widening_class_hierarchy,
+    r#"
+from typing import TypeVar, assert_type
+
+class Animal: ...
+class Dog(Animal): ...
+
+T = TypeVar('T')
+
+def pair(a: T, b: T) -> T: ...
+
+# Dog <: Animal, so T should widen from Dog to Animal
+assert_type(pair(Dog(), Animal()), Animal)
+    "#,
+);
+
+testcase!(
+    test_typevar_widening_respects_bound,
+    r#"
+from typing import TypeVar, assert_type
+
+T = TypeVar('T', bound=int)
+
+def f(a: T, b: T) -> T: ...
+
+# bool <: int, widen to int -- satisfies bound=int
+assert_type(f(True, 1), int)
+
+# float does NOT satisfy bound=int -- should error
+f(1, 2.0)  # E: Argument `float` is not assignable to parameter `b` with type `int`
+    "#,
+);

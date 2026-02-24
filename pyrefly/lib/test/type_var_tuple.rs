@@ -312,7 +312,6 @@ def test[T, *Ts](t1: tuple[T, *Ts], t2: tuple[*Ts, T]):
 );
 
 testcase!(
-    bug = "conformance: TypeVarTuple should allow compatible tuple types when solving (maybe related to issue 105)",
     test_typevartuple_compatible_tuple_types,
     r#"
 from typing import TypeVarTuple
@@ -321,7 +320,9 @@ Ts = TypeVarTuple("Ts")
 
 def func2(arg1: tuple[*Ts], arg2: tuple[*Ts]) -> tuple[*Ts]: ...
 
-func2((0,), (0.0,))  # E: Argument `tuple[float]` is not assignable to parameter `arg2` with type `tuple[int]`
+# TypeVar widening allows this: Ts is pinned to (int,) from arg1,
+# then widened to (float,) for arg2 since int <: float.
+func2((0,), (0.0,))
 "#,
 );
 

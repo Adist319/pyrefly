@@ -1571,6 +1571,10 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
                     ))
                 },
             );
+            // After the input check, TypeVars are fully constrained from parameter types.
+            // Freeze them to prevent widening during the return type consistency check,
+            // where widening would incorrectly mask real inconsistencies.
+            self.solver().freeze_quantified_vars(&vs);
             self.check_type(
                 &overload_func.signature.ret,
                 &impl_func.signature.ret,

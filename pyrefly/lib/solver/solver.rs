@@ -316,6 +316,18 @@ pub enum PinError {
 pub struct Solver {
     variables: Mutex<Variables>,
     instantiation_errors: RwLock<SmallMap<Var, TypeVarSpecializationError>>,
+    /// Vars that were recently pinned from `Variable::Quantified` to `Variable::Answer`
+    /// and are still eligible for widening. Maps each var to its original bound type so
+    /// that widening can verify the new type still satisfies the bound.
+    ///
+    /// When a TypeVar is first solved (e.g., `T=int` from the first arg), it's widenable
+    /// so that a subsequent constraint (e.g., `float <: T`) can widen it to a common
+    /// supertype (`T=float`). This supports the numeric tower where `int <: float`.
+    ///
+    /// Vars are removed from this map when `freeze_quantified_vars` is called (to prevent
+    /// widening during verification phases like overload return consistency checks) or
+    /// when `finish_quantified` finalizes them.
+    widenable_vars: Mutex<SmallMap<Var, Type>>,
     pub infer_with_first_use: bool,
     pub heap: TypeHeap,
     pub tensor_shapes: bool,
@@ -340,6 +352,7 @@ impl Solver {
         Self {
             variables: Default::default(),
             instantiation_errors: Default::default(),
+            widenable_vars: Default::default(),
             infer_with_first_use,
             heap: TypeHeap::new(),
             tensor_shapes,
@@ -821,6 +834,17 @@ impl Solver {
         vs.0.iter().any(|v| lock.contains_key(v))
     }
 
+    /// Remove vars from the widenable set, preventing further widening.
+    /// Called after type variables have been fully constrained from input types,
+    /// before verification checks (e.g., overload return consistency) where
+    /// widening would be incorrect.
+    pub fn freeze_quantified_vars(&self, vs: &QuantifiedHandle) {
+        let mut widenable = self.widenable_vars.lock();
+        for v in &vs.0 {
+            widenable.shift_remove(v);
+        }
+    }
+
     /// Called after a quantified function has been called. Given `def f[T](x: int): list[T]`,
     /// after the generic has completed.
     /// If `infer_with_first_use` is true, the variable `T` will be have like an
@@ -832,8 +856,10 @@ impl Solver {
         infer_with_first_use: bool,
     ) -> Result<(), Vec1<TypeVarSpecializationError>> {
         let lock = self.variables.lock();
+        let mut widenable = self.widenable_vars.lock();
         let mut err = Vec::new();
         for v in vs.0 {
+            widenable.shift_remove(&v);
             let mut e = lock.get_mut(v);
             match &mut *e {
                 Variable::Answer(_) => {
@@ -1724,7 +1750,33 @@ impl<'a, Ans: LookupAnswer> Subset<'a, Ans> {
                         let t2 = t2.clone();
                         drop(v2_ref);
                         drop(variables);
-                        self.is_subset_eq(t1, &t2)
+                        match self.is_subset_eq(t1, &t2) {
+                            Ok(()) => Ok(()),
+                            Err(e) => {
+                                // If the var is still widenable and the current answer is a
+                                // subtype of the new type, widen to the new type. This handles
+                                // the numeric tower: if T was pinned to `int` and now `float`
+                                // arrives, `int <: float` holds so we widen T to `float`.
+                                // Promote literals first so that e.g. `Literal[1]` becomes `int`
+                                // before the widening check, matching the Quantified branch.
+                                let t1_p = t1
+                                    .clone()
+                                    .promote_implicit_literals(self.type_order.stdlib());
+                                let bound = self.solver.widenable_vars.lock().get(v2).cloned();
+                                if let Some(bound) = bound
+                                    && self.is_subset_eq(&t2, &t1_p).is_ok()
+                                    && self.is_subset_eq(&t1_p, &bound).is_ok()
+                                {
+                                    self.solver
+                                        .variables
+                                        .lock()
+                                        .update(*v2, Variable::Answer(t1_p));
+                                    Ok(())
+                                } else {
+                                    Err(e)
+                                }
+                            }
+                        }
                     }
                     Variable::Quantified(q) | Variable::PartialQuantified(q) => {
                         let t1_p = t1
@@ -1737,6 +1789,10 @@ impl<'a, Ans: LookupAnswer> Subset<'a, Ans> {
                         drop(v2_ref);
                         variables.update(*v2, Variable::Answer(t1_p.clone()));
                         drop(variables);
+                        // Mark this var as widenable so that subsequent constraints
+                        // can widen it to a supertype (e.g., int -> float in the numeric tower).
+                        // Store the bound so widening can verify the new type still satisfies it.
+                        self.solver.widenable_vars.lock().insert(*v2, bound.clone());
 
                         if let Err(err_p) = self.is_subset_eq(&t1_p, &bound) {
                             // If the promoted type fails, try again with the original type, in case the bound itself is literal.
