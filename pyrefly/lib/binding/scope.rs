@@ -673,6 +673,9 @@ impl FlowStyle {
                     merged = x;
                 }
                 // Uninitialized-like branches merge into PossiblyUninitialized.
+                // This also catches MaybeInitialized paired with Uninitialized or
+                // PossiblyUninitialized, since the arms above handle the other
+                // MaybeInitialized combinations.
                 (
                     FlowStyle::Uninitialized
                     | FlowStyle::PossiblyUninitialized

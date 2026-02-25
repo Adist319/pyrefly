@@ -1795,6 +1795,9 @@ def f(x: int | str | float) -> str:
 "#,
 );
 
+// Inside `if isinstance(x, int)`, x is already `int`, so the inner
+// `if isinstance(x, int)` is always true and result is always assigned.
+// This tests that the outer if/elif chain's exhaustiveness is recognized.
 testcase!(
     test_nested_isinstance_exhaustive_three_way,
     r#"
