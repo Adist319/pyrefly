@@ -1753,3 +1753,74 @@ def f(x: int | str, y: int | str) -> str:  # E: Function declared to return `str
     # Different subjects in different branches - cannot determine exhaustiveness
 "#,
 );
+
+// Tests for nested isinstance exhaustiveness (issue #2520).
+
+testcase!(
+    test_nested_isinstance_exhaustive_variable_init,
+    r#"
+def describe(value: int | str | float) -> str:
+    if isinstance(value, (int, float)):
+        if isinstance(value, int):
+            result = f"integer: {value}"
+        elif isinstance(value, float):
+            result = f"float: {value}"
+    else:
+        result = f"string: {value}"
+    return result
+"#,
+);
+
+testcase!(
+    test_flat_isinstance_exhaustive_variable_init,
+    r#"
+def f(x: int | str) -> str:
+    if isinstance(x, int):
+        result = "int"
+    elif isinstance(x, str):
+        result = "str"
+    return result
+"#,
+);
+
+testcase!(
+    test_nested_isinstance_non_exhaustive_variable_init,
+    r#"
+def f(x: int | str | float) -> str:
+    if isinstance(x, (int, float)):
+        if isinstance(x, int):
+            result = f"integer: {x}"
+        # Missing float case - inner fork is genuinely non-exhaustive
+    else:
+        result = f"string: {x}"
+    return result  # E: `result` may be uninitialized
+"#,
+);
+
+testcase!(
+    test_nested_isinstance_exhaustive_three_way,
+    r#"
+def f(x: int | str | float) -> str:
+    if isinstance(x, int):
+        if isinstance(x, int):
+            result = "int"
+    elif isinstance(x, str):
+        result = "str"
+    elif isinstance(x, float):
+        result = "float"
+    return result
+"#,
+);
+
+testcase!(
+    test_flat_isinstance_non_exhaustive_variable_init,
+    r#"
+def f(x: int | str | float) -> str:
+    if isinstance(x, int):
+        result = "int"
+    elif isinstance(x, str):
+        result = "str"
+    # Missing float case
+    return result  # E: `result` may be uninitialized
+"#,
+);
