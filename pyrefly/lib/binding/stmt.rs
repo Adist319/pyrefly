@@ -1053,11 +1053,7 @@ impl<'a> BindingsBuilder<'a> {
                     // checks that always fail at solve time.
                     self.finish_non_exhaustive_fork(
                         &negated_prev_ops,
-                        if has_elif {
-                            Some(exhaustive_key)
-                        } else {
-                            None
-                        },
+                        if has_elif { Some(exhaustive_key) } else { None },
                     );
                 } else {
                     self.finish_exhaustive_fork();
