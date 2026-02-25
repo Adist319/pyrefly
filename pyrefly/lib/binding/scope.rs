@@ -3308,14 +3308,15 @@ impl<'a> BindingsBuilder<'a> {
 
     /// Finish a non-exhaustive fork in which the base flow is part of the merge. It negates
     /// the branch-choosing narrows by applying `negated_prev_ops` to base before merging, which
-    /// is important so that we can preserve any cases where a termanating branch has permanently
+    /// is important so that we can preserve any cases where a terminating branch has permanently
     /// narrowed the type (e.g. an early return when an optional variable is None).
+    ///
+    /// When `exhaustive_key` is provided, the base-as-branch flow is marked with it
+    /// so that missing variable definitions produce a deferred check rather than an
+    /// immediate uninitialized error.
     ///
     /// Panics if called when no fork is active, or if a branch is started (which
     /// means the caller forgot to call `finish_branch` and is always a bug).
-    /// Finish a non-exhaustive fork. When `exhaustive_key` is provided, the
-    /// base-as-branch flow is marked with it so that missing variable definitions
-    /// produce a deferred check rather than an immediate uninitialized error.
     pub fn finish_non_exhaustive_fork(
         &mut self,
         negated_prev_ops: &NarrowOps,
@@ -3345,7 +3346,12 @@ impl<'a> BindingsBuilder<'a> {
     /// fork's subject needs its narrowed type (not the un-narrowed base type).
     pub fn with_fork_base_flow<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let scope = self.scopes.current_mut();
-        let base_flow = scope.forks.last().unwrap().base.clone();
+        let base_flow = scope
+            .forks
+            .last()
+            .expect("with_fork_base_flow requires an active fork")
+            .base
+            .clone();
         let saved_flow = mem::replace(&mut scope.flow, base_flow);
         let result = f(self);
         self.scopes.current_mut().flow = saved_flow;

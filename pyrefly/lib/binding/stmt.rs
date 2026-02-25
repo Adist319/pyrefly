@@ -948,6 +948,10 @@ impl<'a> BindingsBuilder<'a> {
                 // is carried over to the else branch.
                 let mut negated_prev_ops = NarrowOps::new();
                 let mut contains_static_test_with_no_else = false;
+                // An if/elif chain (with at least one elif) can be type-exhaustive,
+                // meaning all union variants are covered by isinstance checks. A bare
+                // `if` (no elif) cannot be exhaustive, so we skip the deferred check.
+                let has_elif = x.elif_else_clauses.iter().any(|c| c.test.is_some());
                 for (range, mut test, body) in Ast::if_branches_owned(x) {
                     self.start_branch();
                     self.bind_narrow_ops(
@@ -1043,7 +1047,18 @@ impl<'a> BindingsBuilder<'a> {
                             exhaustiveness_info: info_for_binding,
                         })),
                     );
-                    self.finish_non_exhaustive_fork(&negated_prev_ops, Some(exhaustive_key));
+                    // Only use the exhaustive key for variable initialization tracking
+                    // when this is an if/elif chain. A bare `if` block can never be
+                    // exhaustive, and passing the key would create unnecessary deferred
+                    // checks that always fail at solve time.
+                    self.finish_non_exhaustive_fork(
+                        &negated_prev_ops,
+                        if has_elif {
+                            Some(exhaustive_key)
+                        } else {
+                            None
+                        },
+                    );
                 } else {
                     self.finish_exhaustive_fork();
                 }
