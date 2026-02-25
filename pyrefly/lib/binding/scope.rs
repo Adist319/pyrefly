@@ -647,11 +647,39 @@ impl FlowStyle {
     ) -> FlowStyle {
         let mut merged = styles.next().unwrap_or(FlowStyle::Other);
         for x in styles {
-            match (&merged, x) {
+            match (&merged, &x) {
                 // If they're identical, keep it
-                (l, r) if l == &r => {}
+                (l, r) if l == r => {}
+                // When a MaybeInitialized branch merges with a definitely-defined
+                // branch, preserve the deferred check: the variable is initialized
+                // if the termination keys all resolve to Never.
+                (FlowStyle::MaybeInitialized(_), FlowStyle::MaybeInitialized(_)) => {
+                    // Union the keys from both sides.
+                    if let (
+                        FlowStyle::MaybeInitialized(keys),
+                        FlowStyle::MaybeInitialized(other_keys),
+                    ) = (&mut merged, x)
+                    {
+                        keys.extend(other_keys);
+                    }
+                }
+                (FlowStyle::MaybeInitialized(_), r)
+                    if !matches!(
+                        r,
+                        FlowStyle::Uninitialized | FlowStyle::PossiblyUninitialized
+                    ) =>
+                {
+                    // Keep MaybeInitialized from left side; right is definitely defined.
+                }
+                (l, FlowStyle::MaybeInitialized(_))
+                    if !matches!(
+                        l,
+                        FlowStyle::Uninitialized | FlowStyle::PossiblyUninitialized
+                    ) =>
+                {
+                    merged = x;
+                }
                 // Uninitialized-like branches merge into PossiblyUninitialized.
-                // MaybeInitialized is treated like PossiblyUninitialized for merge purposes.
                 (
                     FlowStyle::Uninitialized
                     | FlowStyle::PossiblyUninitialized
@@ -3237,6 +3265,7 @@ impl<'a> BindingsBuilder<'a> {
         &mut self,
         negated_prev_ops_if_nonexhaustive: Option<&NarrowOps>,
         is_bool_op: bool,
+        exhaustive_key: Option<Idx<Key>>,
     ) {
         let fork = self.scopes.current_mut().forks.pop().unwrap();
         assert!(
@@ -3252,6 +3281,14 @@ impl<'a> BindingsBuilder<'a> {
                 NarrowUseLocation::End(fork.range),
                 &Usage::Narrowing(None),
             );
+            // Mark the base-as-branch flow with the exhaustive key so that variables
+            // only defined inside explicit branches get a deferred check instead of
+            // being flagged as possibly uninitialized. At solve time, if the Exhaustive
+            // binding resolves to Never (isinstance checks cover all union variants),
+            // the deferred check passes and no error is emitted.
+            if let Some(key) = exhaustive_key {
+                self.scopes.current_mut().flow.last_stmt_expr = Some(key);
+            }
             self.merge_flow(fork.base, branches, fork.range, MergeStyle::Inclusive);
         } else {
             self.merge_flow(
@@ -3273,7 +3310,7 @@ impl<'a> BindingsBuilder<'a> {
     /// Panics if called when no fork is active, or if a branch is started (which
     /// means the caller forgot to call `finish_branch` and is always a bug).
     pub fn finish_exhaustive_fork(&mut self) {
-        self.finish_fork_impl(None, false)
+        self.finish_fork_impl(None, false, None)
     }
 
     /// Finish a non-exhaustive fork in which the base flow is part of the merge. It negates
@@ -3283,14 +3320,21 @@ impl<'a> BindingsBuilder<'a> {
     ///
     /// Panics if called when no fork is active, or if a branch is started (which
     /// means the caller forgot to call `finish_branch` and is always a bug).
-    pub fn finish_non_exhaustive_fork(&mut self, negated_prev_ops: &NarrowOps) {
-        self.finish_fork_impl(Some(negated_prev_ops), false)
+    /// Finish a non-exhaustive fork. When `exhaustive_key` is provided, the
+    /// base-as-branch flow is marked with it so that missing variable definitions
+    /// produce a deferred check rather than an immediate uninitialized error.
+    pub fn finish_non_exhaustive_fork(
+        &mut self,
+        negated_prev_ops: &NarrowOps,
+        exhaustive_key: Option<Idx<Key>>,
+    ) {
+        self.finish_fork_impl(Some(negated_prev_ops), false, exhaustive_key)
     }
 
     /// Finish the fork for a boolean operation. This requires lax handling of
     /// possibly-uninitialized locals, see the inline comment in `FlowStyle::merge`.
     pub fn finish_bool_op_fork(&mut self) {
-        self.finish_fork_impl(None, true)
+        self.finish_fork_impl(None, true, None)
     }
 
     /// Finish a `MatchOr`, which behaves like an exhaustive fork except that we know
@@ -3300,6 +3344,19 @@ impl<'a> BindingsBuilder<'a> {
         // TODO(stroxler): At the moment these are the same, but once we start eliminating
         // narrows aggressively we will need to handle this case differently
         self.finish_exhaustive_fork();
+    }
+
+    /// Temporarily restore the current fork's base flow and execute a callback.
+    /// Used to perform name lookups in the narrowed context of an enclosing branch,
+    /// which is necessary for nested if/elif exhaustiveness checks where the inner
+    /// fork's subject needs its narrowed type (not the un-narrowed base type).
+    pub fn with_fork_base_flow<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let scope = self.scopes.current_mut();
+        let base_flow = scope.forks.last().unwrap().base.clone();
+        let saved_flow = mem::replace(&mut scope.flow, base_flow);
+        let result = f(self);
+        self.scopes.current_mut().flow = saved_flow;
+        result
     }
 
     pub fn start_fork_and_branch(&mut self, range: TextRange) {

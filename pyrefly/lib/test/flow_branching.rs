@@ -1656,10 +1656,9 @@ def f(c: Color) -> str:
 );
 
 testcase!(
-    bug = "isinstance exhaustiveness not yet working for all union patterns",
     test_if_elif_isinstance_exhaustive,
     r#"
-def f(x: int | str) -> str:  # E: Function declared to return `str`, but one or more paths are missing an explicit `return`
+def f(x: int | str) -> str:
     if isinstance(x, int):
         return "int"
     elif isinstance(x, str):
@@ -1720,10 +1719,9 @@ def f(x: Literal["a", "b", "c"]) -> str:
 );
 
 testcase!(
-    bug = "mixed is/isinstance narrowing exhaustiveness not yet working",
     test_if_elif_mixed_narrowing,
     r#"
-def f(x: int | None) -> str:  # E: Function declared to return `str`, but one or more paths are missing an explicit `return`
+def f(x: int | None) -> str:
     if x is None:
         return "none"
     elif isinstance(x, int):

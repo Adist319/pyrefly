@@ -1009,9 +1009,14 @@ impl<'a> BindingsBuilder<'a> {
                             exhaustiveness_info
                         {
                             let hashed_name = Hashed::new(&name);
-                            if let NameLookupResult::Found { idx, .. } =
-                                self.lookup_name(hashed_name, &mut Usage::Narrowing(None))
-                            {
+                            // Look up the subject in the fork's base flow so it gets
+                            // its narrowed type. This is essential for nested isinstance:
+                            // inside `if isinstance(x, (int, float))`, the inner fork's
+                            // subject should be `int | float`, not the un-narrowed type.
+                            let lookup_result = self.with_fork_base_flow(|this| {
+                                this.lookup_name(hashed_name, &mut Usage::Narrowing(None))
+                            });
+                            if let NameLookupResult::Found { idx, .. } = lookup_result {
                                 (
                                     idx,
                                     narrow_range,
@@ -1029,7 +1034,7 @@ impl<'a> BindingsBuilder<'a> {
                                 self.insert_binding(Key::Anon(if_range), Binding::None);
                             (fallback_idx, if_range, None)
                         };
-                    self.insert_binding(
+                    let exhaustive_key = self.insert_binding(
                         Key::Exhaustive(ExhaustivenessKind::IfElif, if_range),
                         Binding::Exhaustive(Box::new(ExhaustiveBinding {
                             kind: ExhaustivenessKind::IfElif,
@@ -1038,11 +1043,9 @@ impl<'a> BindingsBuilder<'a> {
                             exhaustiveness_info: info_for_binding,
                         })),
                     );
-                }
-                if exhaustive {
-                    self.finish_exhaustive_fork();
+                    self.finish_non_exhaustive_fork(&negated_prev_ops, Some(exhaustive_key));
                 } else {
-                    self.finish_non_exhaustive_fork(&negated_prev_ops);
+                    self.finish_exhaustive_fork();
                 }
                 // If we have a statically evaluated test like `sys.version_info`, we should set `is_definitely_unreachable` to false
                 // to reduce false positive unreachable errors, since some code paths can still be hit at runtime

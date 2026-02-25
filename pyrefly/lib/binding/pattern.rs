@@ -488,7 +488,7 @@ impl<'a> BindingsBuilder<'a> {
         if exhaustive {
             self.finish_exhaustive_fork();
         } else {
-            self.finish_non_exhaustive_fork(&negated_prev_ops);
+            self.finish_non_exhaustive_fork(&negated_prev_ops, None);
             // Compute exhaustiveness info if we can determine the narrowing subject
             // and have accumulated narrow ops for it.
             let exhaustiveness_info = match_narrowing_subject.and_then(|narrowing_subject| {

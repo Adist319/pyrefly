@@ -90,6 +90,7 @@ use crate::binding::binding::BindingYield;
 use crate::binding::binding::BindingYieldFrom;
 use crate::binding::binding::BranchInfo;
 use crate::binding::binding::EmptyAnswer;
+use crate::binding::binding::ExhaustivenessKind;
 use crate::binding::binding::ExprOrBinding;
 use crate::binding::binding::FirstUse;
 use crate::binding::binding::FunctionParameter;
@@ -2858,6 +2859,7 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
     #[inline(never)]
     fn binding_to_type_exhaustive(
         &self,
+        kind: ExhaustivenessKind,
         subject_idx: Idx<Key>,
         subject_range: TextRange,
         exhaustiveness_info: &Option<(NarrowingSubject, (Box<NarrowOp>, TextRange))>,
@@ -2871,9 +2873,14 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
         let mut subject_ty = subject_info.ty().clone();
         self.expand_vars_mut(&mut subject_ty);
 
-        // Check if this type should have exhaustiveness checked
-        if !self.should_check_exhaustiveness(&subject_ty) {
-            return self.heap.mk_none(); // Not exhaustible, assume fall-through
+        // For match statements, only check exhaustiveness when the type has a finite
+        // set of possible values (enums, literals, bools, etc.). For if/elif chains,
+        // skip this guard because isinstance-based narrowing (represented as NotCall
+        // ops at binding time) can determine exhaustiveness for any union type.
+        if matches!(kind, ExhaustivenessKind::Match)
+            && !self.should_check_exhaustiveness(&subject_ty)
+        {
+            return self.heap.mk_none();
         }
 
         let ignore_errors = self.error_swallower();
@@ -4507,6 +4514,7 @@ impl<'a, Ans: LookupAnswer> AnswersSolver<'a, Ans> {
                 self.binding_to_type_class_body_unknown_name(x.0, &x.1, &x.2, errors)
             }
             Binding::Exhaustive(x) => self.binding_to_type_exhaustive(
+                x.kind,
                 x.subject_idx,
                 x.subject_range,
                 &x.exhaustiveness_info,
