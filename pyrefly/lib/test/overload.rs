@@ -1572,3 +1572,40 @@ assert_type(f(True, 1), int)
 f(1, 2.0)  # E: Argument `float` is not assignable to parameter `b` with type `int`
     "#,
 );
+
+testcase!(
+    bug = "Nested generic calls finalize TypeVars independently, preventing cross-call widening",
+    test_typevar_widening_multi_step,
+    r#"
+from typing import TypeVar, assert_type
+
+T = TypeVar('T')
+
+def pair(a: T, b: T) -> T: ...
+
+# The inner pair(True, 1) resolves T=int (widening bool->int), returning int.
+# The outer pair then sees (int, 2.0) as a fresh call. The inner T is already
+# finalized, so the outer T gets pinned to int and cannot widen to float.
+assert_type(pair(pair(True, 1), 2.0), float)  # E: assert_type(int, float) failed  # E: Argument `float` is not assignable to parameter `b` with type `int`
+
+# Direct three-arg max does widen because all args share the same TypeVar scope.
+assert_type(max(True, 1, 2.0), float)
+    "#,
+);
+
+testcase!(
+    test_typevar_widening_union_rejected,
+    r#"
+from typing import TypeVar
+
+T = TypeVar('T')
+
+def pair(a: T, b: T) -> T: ...
+
+# int | str is not a subtype of float, so widening should not apply.
+# T is pinned to int | str from the first arg, then float fails because
+# int | str is not <: float.
+x: int | str = 1
+pair(x, 2.0)  # E: Argument `float` is not assignable to parameter `b` with type `int | str`
+    "#,
+);

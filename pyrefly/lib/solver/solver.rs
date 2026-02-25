@@ -1795,6 +1795,9 @@ impl<'a, Ans: LookupAnswer> Subset<'a, Ans> {
                         self.solver.widenable_vars.lock().insert(*v2, bound.clone());
 
                         if let Err(err_p) = self.is_subset_eq(&t1_p, &bound) {
+                            // Bound check failed; the pin is already invalid so remove
+                            // from the widenable set to avoid pointless widening attempts.
+                            self.solver.widenable_vars.lock().shift_remove(v2);
                             // If the promoted type fails, try again with the original type, in case the bound itself is literal.
                             // This could be more optimized, but errors are rare, so this code path should not be hot.
                             self.solver
