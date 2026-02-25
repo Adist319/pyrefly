@@ -650,16 +650,12 @@ impl FlowStyle {
             match (&merged, &x) {
                 // If they're identical, keep it
                 (l, r) if l == r => {}
-                // When a MaybeInitialized branch merges with a definitely-defined
-                // branch, preserve the deferred check: the variable is initialized
-                // if the termination keys all resolve to Never.
-                (FlowStyle::MaybeInitialized(_), FlowStyle::MaybeInitialized(_)) => {
-                    // Union the keys from both sides.
-                    if let (
-                        FlowStyle::MaybeInitialized(keys),
-                        FlowStyle::MaybeInitialized(other_keys),
-                    ) = (&mut merged, x)
-                    {
+                // MaybeInitialized merges with definitely-defined styles by preserving
+                // the deferred check. When both sides have MaybeInitialized, union the
+                // termination keys. When paired with Uninitialized or PossiblyUninitialized,
+                // fall through to the catch-all below.
+                (FlowStyle::MaybeInitialized(_), FlowStyle::MaybeInitialized(other_keys)) => {
+                    if let FlowStyle::MaybeInitialized(keys) = &mut merged {
                         keys.extend(other_keys);
                     }
                 }
@@ -667,10 +663,7 @@ impl FlowStyle {
                     if !matches!(
                         r,
                         FlowStyle::Uninitialized | FlowStyle::PossiblyUninitialized
-                    ) =>
-                {
-                    // Keep MaybeInitialized from left side; right is definitely defined.
-                }
+                    ) => {}
                 (l, FlowStyle::MaybeInitialized(_))
                     if !matches!(
                         l,
