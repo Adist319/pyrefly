@@ -1230,18 +1230,19 @@ impl<'a> BindingsBuilder<'a> {
         if let Some(ref defaults_expr) = adjacent_defaults {
             Self::apply_adjacent_defaults(defaults_expr, n_members, &mut defaults);
         }
-        let member_definitions: Vec<(String, TextRange, Option<Expr>, Option<Expr>)> = parsed_fields
-            .into_iter()
-            .zip(defaults)
-            .map(|((name, range, annotation), default)| {
-                if let Some(mut ann) = annotation {
-                    self.ensure_type(&mut ann, &mut None);
-                    (name, range, Some(ann), default)
-                } else {
-                    (name, range, None, default)
-                }
-            })
-            .collect();
+        let member_definitions: Vec<(String, TextRange, Option<Expr>, Option<Expr>)> =
+            parsed_fields
+                .into_iter()
+                .zip(defaults)
+                .map(|((name, range, annotation), default)| {
+                    if let Some(mut ann) = annotation {
+                        self.ensure_type(&mut ann, &mut None);
+                        (name, range, Some(ann), default)
+                    } else {
+                        (name, range, None, default)
+                    }
+                })
+                .collect();
         self.synthesize_class_def(
             class_name,
             class_object,
