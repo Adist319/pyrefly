@@ -973,14 +973,12 @@ impl<'a> BindingsBuilder<'a> {
                     special,
                     SpecialExport::TypingNamedTuple | SpecialExport::CollectionsNamedTuple
                 )
-            {
-                if let Some(defaults_expr) = iter
+                && let Some(defaults_expr) = iter
                     .peek()
                     .and_then(|next| extract_adjacent_new_defaults(next, &name.id))
-                {
-                    iter.next(); // consume the __new__.__defaults__ statement
-                    self.adjacent_namedtuple_defaults = Some(defaults_expr);
-                }
+            {
+                iter.next(); // consume the __new__.__defaults__ statement
+                self.adjacent_namedtuple_defaults = Some(defaults_expr);
             }
             self.stmt(x, parent);
             // Clear unconsumed defaults (safety — should already be drained by NamedTuple arms)
