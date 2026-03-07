@@ -259,7 +259,7 @@ pub struct BindingsBuilder<'a> {
     subsequently_initialized: SmallSet<Idx<KeyAnnotation>>,
     /// Temporary storage for adjacent __new__.__defaults__ expression detected by stmts().
     /// Set before calling stmt() for a namedtuple assignment, drained by the NamedTuple arms.
-    pub adjacent_namedtuple_defaults: Option<Expr>,
+    pub(super) adjacent_namedtuple_defaults: Option<Expr>,
 }
 
 /// An enum tracking whether we are in a generator expression
@@ -754,7 +754,7 @@ fn extract_adjacent_new_defaults(stmt: &Stmt, name: &str) -> Option<Expr> {
         && target_name.id == name
         && matches!(*assign.value, Expr::Tuple(_) | Expr::NoneLiteral(_))
     {
-        Some(*assign.value.clone())
+        Some((*assign.value).clone())
     } else {
         None
     }

@@ -663,7 +663,7 @@ testcase!(
 from collections import namedtuple
 Point = namedtuple("Point", ["x", "y", "z"])
 Point.__new__.__defaults__ = None
-p = Point(1, 2)  # E: Missing argument `z`
+p = Point(1, 2)  # E: Missing argument `z` in function `Point.__new__`
 "#,
 );
 
@@ -686,7 +686,7 @@ from collections import namedtuple
 Point = namedtuple("Point", ["x", "y", "z"])
 x = 1
 Point.__new__.__defaults__ = (0,)
-p = Point(1, 2)  # E: Missing argument `z`
+p = Point(1, 2)  # E: Missing argument `z` in function `Point.__new__`
 "#,
 );
 
@@ -699,7 +699,19 @@ class Point(NamedTuple):
     x: int
     y: int
     z: int
-p = Point(1, 2)  # E: Missing argument `z`
+p = Point(1, 2)  # E: Missing argument `z` in function `Point.__new__`
+"#,
+);
+
+// Non-literal RHS is not consumed (variable reference falls through to normal type checking)
+testcase!(
+    test_namedtuple_defaults_non_literal_rhs,
+    r#"
+from collections import namedtuple
+Point = namedtuple("Point", ["x", "y", "z"])
+defs = (0,)
+Point.__new__.__defaults__ = defs
+p = Point(1, 2)  # E: Missing argument `z` in function `Point.__new__`
 "#,
 );
 
