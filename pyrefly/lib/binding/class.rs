@@ -1097,12 +1097,13 @@ impl<'a> BindingsBuilder<'a> {
     ) {
         match defaults_expr {
             Expr::NoneLiteral(_) => {
-                *defaults = vec![None; n_members];
+                defaults.iter_mut().for_each(|d| *d = None);
             }
             Expr::Tuple(tuple) => {
                 let elts = &tuple.elts;
-                *defaults = vec![None; n_members];
+                defaults.iter_mut().for_each(|d| *d = None);
                 let n_defaults = elts.len().min(n_members);
+                // Right-align: skip leading elements if more defaults than fields
                 let start = elts.len() - n_defaults;
                 for (i, elt) in elts[start..].iter().enumerate() {
                     defaults[n_members - n_defaults + i] = Some(elt.clone());

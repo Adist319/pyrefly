@@ -725,3 +725,25 @@ Point.__new__.__defaults__ = (2, 3)
 p = Point(1)  # should succeed — y and z now have defaults from __new__.__defaults__
 "#,
 );
+
+// Empty tuple means no defaults (all required)
+testcase!(
+    test_namedtuple_adjacent_defaults_empty_tuple,
+    r#"
+from collections import namedtuple
+Point = namedtuple("Point", ["x", "y", "z"])
+Point.__new__.__defaults__ = ()
+p = Point(1, 2)  # E: Missing argument `z` in function `Point.__new__`
+"#,
+);
+
+// None overrides existing defaults= kwarg (clears all defaults)
+testcase!(
+    test_namedtuple_none_overrides_kwarg,
+    r#"
+from collections import namedtuple
+Point = namedtuple("Point", ["x", "y", "z"], defaults=(1,))
+Point.__new__.__defaults__ = None
+p = Point(1, 2)  # E: Missing argument `z` in function `Point.__new__`
+"#,
+);

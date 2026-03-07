@@ -964,18 +964,21 @@ impl<'a> BindingsBuilder<'a> {
     pub fn stmts(&mut self, xs: Vec<Stmt>, parent: &NestingContext) {
         let mut iter = xs.into_iter().peekable();
         while let Some(x) = iter.next() {
-            // Check if this is a functional namedtuple followed by __new__.__defaults__
+            // Check if this is a functional namedtuple followed by __new__.__defaults__.
+            // Guard order is intentional: the cheap peek at the next statement comes before
+            // the expensive as_special_export scope lookup, so we only pay that cost when
+            // the adjacent __new__.__defaults__ pattern is actually present (very rare).
             if let Stmt::Assign(assign) = &x
                 && let [Expr::Name(name)] = assign.targets.as_slice()
                 && let Expr::Call(call) = assign.value.as_ref()
+                && let Some(defaults_expr) = iter
+                    .peek()
+                    .and_then(|next| extract_adjacent_new_defaults(next, &name.id))
                 && let Some(special) = self.as_special_export(&call.func)
                 && matches!(
                     special,
                     SpecialExport::TypingNamedTuple | SpecialExport::CollectionsNamedTuple
                 )
-                && let Some(defaults_expr) = iter
-                    .peek()
-                    .and_then(|next| extract_adjacent_new_defaults(next, &name.id))
             {
                 iter.next(); // consume the __new__.__defaults__ statement
                 self.adjacent_namedtuple_defaults = Some(defaults_expr);
